@@ -1,0 +1,13 @@
+# Cloudflare Pages — HTTP hlavičky
+# Service worker se nesmí cachovat, jinak by appka držela starou verzi.
+/sw.js
+  Cache-Control: no-cache, no-store, must-revalidate
+
+# Manifest a ikony — správný typ a rozumná cache.
+/manifest.webmanifest
+  Content-Type: application/manifest+json
+  Cache-Control: public, max-age=86400
+
+# Aplikační kód obnovovat při každé návštěvě (verzování řeší sw.js).
+/*.js
+  Cache-Control: no-cache

@@ -676,10 +676,71 @@ function renderMapChips() {
   if (cb) cb.onclick = () => { S.focusTrail = null; renderMapChips(); drawMarkers(); S.map && S.map.flyTo({ center:[20.05,49.33], zoom:9.6 }); };
 }
 
+/* -------- Trasa jako linie (BRouter hiking, s cache a zálohou) ---------- */
+/* Vrátí pole [lng,lat] podél reálné pěší cesty, nebo null. Cache v localStorage. */
+async function fetchRoute(t) {
+  if (!t.dest_lat || !t.dest_lng) return null;
+  const key = "t26.route." + t.id;
+  try { const c = JSON.parse(localStorage.getItem(key) || "null"); if (c && c.length) return c; } catch(e) {}
+  const url = "https://brouter.de/brouter"
+    + `?lonlats=${t.trailhead_lng},${t.trailhead_lat}|${t.dest_lng},${t.dest_lat}`
+    + "&profile=hiking-mountain&alternativeidx=0&format=geojson";
+  try {
+    const res = await fetch(url, { mode:"cors" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const gj = await res.json();
+    const coords = gj.features && gj.features[0] && gj.features[0].geometry.coordinates;
+    if (!coords || coords.length < 2) throw new Error("prázdná trasa");
+    const line = coords.map(c => [c[0], c[1]]);   // [lng,lat]
+    try { localStorage.setItem(key, JSON.stringify(line)); } catch(e) {}
+    return line;
+  } catch (e) { return null; }   // fallback řeší volající
+}
+
+/* Nakresli/aktualizuj linii trasy na mapě (source+layer "route"). */
+function setRouteLine(coords, approx) {
+  if (!S.map || !S.mapReady) return;
+  const data = { type:"Feature", geometry:{ type:"LineString", coordinates:coords } };
+  const src = S.map.getSource("route");
+  if (src) { src.setData(data); }
+  else {
+    S.map.addSource("route", { type:"geojson", data });
+    /* obrys pro kontrast na topo podkladu */
+    S.map.addLayer({ id:"route-case", type:"line", source:"route",
+      layout:{ "line-cap":"round", "line-join":"round" },
+      paint:{ "line-color":"#0b1220", "line-width":7, "line-opacity":0.55 } });
+    S.map.addLayer({ id:"route-line", type:"line", source:"route",
+      layout:{ "line-cap":"round", "line-join":"round" },
+      paint:{ "line-color":"#ff2e63", "line-width":4 } });
+  }
+  S.map.setPaintProperty("route-line", "line-dasharray", approx ? [2,2] : [1,0]);
+  S.map.setPaintProperty("route-line", "line-color", approx ? "#ffc94d" : "#ff2e63");
+}
+function clearRouteLine() {
+  if (!S.map) return;
+  ["route-line","route-case"].forEach(id => { if (S.map.getLayer(id)) S.map.removeLayer(id); });
+  if (S.map.getSource("route")) S.map.removeSource("route");
+}
+function fitLine(coords) {
+  const b = new maplibregl.LngLatBounds();
+  coords.forEach(c => b.extend(c));
+  S.map.fitBounds(b, { padding:60, maxZoom:15, duration:600 });
+}
+
+/* Zajisti linii pro zaostřenou trasu: reálná routa, jinak přímý (přibližný) spoj. */
+async function ensureRouteLine(t) {
+  const straight = [[t.trailhead_lng,t.trailhead_lat], [t.dest_lng,t.dest_lat]];
+  const line = await fetchRoute(t);
+  if (S.focusTrail !== t.id) return;          // uživatel mezitím přepnul
+  if (line) { setRouteLine(line, false); fitLine(line); }
+  else { setRouteLine(straight, true); fitLine(straight); }
+}
+
 function drawMarkers() {
   if (!S.map) return;
   S.markers.forEach(m => m.remove());
   S.markers = [];
+  if (!S.focusTrail) clearRouteLine();
   const pts = mapPoints();
   pts.forEach(p => {
     if (!p.lat || (!S.focusTrail && !S.layers[layerOf(p.cat)])) return;
@@ -693,15 +754,10 @@ function drawMarkers() {
        <a href="${navUrl(p.lat,p.lng)}" target="_blank" rel="noopener" style="color:#4cc4ff;font-size:12px;text-decoration:none">${esc(T("navigate"))} ↗</a>`);
     S.markers.push(new maplibregl.Marker({ element:el }).setLngLat([p.lng,p.lat]).setPopup(popup).addTo(S.map));
   });
-  /* V režimu zaostření sevři mapu kolem trasy (výchozí bod + vrchol). */
-  if (S.focusTrail && pts.length) {
-    if (pts.length >= 2) {
-      const b = new maplibregl.LngLatBounds();
-      pts.forEach(p => b.extend([p.lng, p.lat]));
-      S.map.fitBounds(b, { padding:70, maxZoom:14.5, duration:600 });
-    } else {
-      S.map.flyTo({ center:[pts[0].lng, pts[0].lat], zoom:13.5, duration:600 });
-    }
+  /* V režimu zaostření dokresli linii trasy (reálná routa nebo přibližný spoj). */
+  if (S.focusTrail) {
+    const t = TRAILS.find(x => x.id === S.focusTrail);
+    if (t) ensureRouteLine(t);
   }
 }
 

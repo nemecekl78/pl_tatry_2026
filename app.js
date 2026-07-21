@@ -63,7 +63,13 @@ function plDays(n) {
   if (n >= 2 && n <= 4) return forms[1];
   return forms[2];
 }
-const navUrl = (lat,lng) => `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`;
+/* Navigace přes Mapy.com v turistickém režimu.
+   Odkaz vloží cílový bod na turistickou mapu (pozor: Mapy používají pořadí lng,lat
+   a x=lng, y=lat). Na iPhonu s nainstalovanou appkou Mapy se otevře přímo v ní
+   a odtud jde spustit pěší navigace; jinak ve webu. */
+const navUrl = (lat,lng) =>
+  `https://mapy.com/turisticka?source=coor&id=${lng.toFixed(5)},${lat.toFixed(5)}` +
+  `&x=${lng.toFixed(5)}&y=${lat.toFixed(5)}&z=16`;
 
 /* Jednotný pohled na trať / relax aktivitu / POI */
 function resolve(id) {

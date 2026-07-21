@@ -1,12 +1,12 @@
 /* Tatry 2026 — service worker (FR-7 offline resilience) */
-const V = "t26-v5";
+const V = "t26-v6";
 const SHELL = [
   "./", "./index.html", "./app.js", "./data.js", "./i18n.js",
   "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./icon-180.png",
   "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js",
   "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
 ];
-const TILES = "t26-tiles-v5";
+const TILES = "t26-tiles-v6";
 const MAX_TILES = 1200;
 
 self.addEventListener("install", e => {

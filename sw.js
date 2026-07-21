@@ -1,12 +1,12 @@
 /* Tatry 2026 — service worker (FR-7 offline resilience) */
-const V = "t26-v6";
+const V = "t26-v7";
 const SHELL = [
   "./", "./index.html", "./app.js", "./data.js", "./i18n.js",
   "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./icon-180.png",
   "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js",
   "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
 ];
-const TILES = "t26-tiles-v6";
+const TILES = "t26-tiles-v7";
 const MAX_TILES = 1200;
 
 self.addEventListener("install", e => {
@@ -65,14 +65,12 @@ self.addEventListener("fetch", e => {
     return;
   }
 
-  // Aplikační shell: cache první, na pozadí obnov
+  // Aplikační shell (HTML/JS/CSS): SÍŤ PRVNÍ, cache jen jako záloha offline.
+  // Zabraňuje tomu, aby po nasazení nové verze zůstal viset starý kód.
   e.respondWith(
-    caches.match(req).then(hit => {
-      const net = fetch(req).then(r => {
-        if (r.ok) { const copy = r.clone(); caches.open(V).then(c => c.put(req, copy)); }
-        return r;
-      }).catch(() => hit);
-      return hit || net;
-    })
+    fetch(req).then(r => {
+      if (r.ok) { const copy = r.clone(); caches.open(V).then(c => c.put(req, copy)); }
+      return r;
+    }).catch(() => caches.match(req))
   );
 });

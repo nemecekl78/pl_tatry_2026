@@ -2,6 +2,7 @@
 window.I18N = {
 cs:{
   code:"CZ",
+  trail_layer:"Trasy", show_all:"Vše", on_map:"Na mapě",
   sun_mode:"Sluneční režim (vypne průsvitnost)",
   nav_today:"Dnes", nav_days:"Dny", nav_map:"Mapa", nav_trails:"Trasy", nav_relax:"Relax",
   active:"AKTIVNÍ", relax:"RELAXAČNÍ",
@@ -28,6 +29,7 @@ cs:{
 },
 pl:{
   code:"PL",
+  trail_layer:"Szlaki", show_all:"Wszystko", on_map:"Na mapie",
   sun_mode:"Tryb słoneczny (wyłącza przezroczystość)",
   nav_today:"Dziś", nav_days:"Dni", nav_map:"Mapa", nav_trails:"Szlaki", nav_relax:"Relaks",
   active:"AKTYWNY", relax:"RELAKSACYJNY",
@@ -54,6 +56,7 @@ pl:{
 },
 sk:{
   code:"SK",
+  trail_layer:"Trasy", show_all:"Všetko", on_map:"Na mape",
   sun_mode:"Slnečný režim (vypne priesvitnosť)",
   nav_today:"Dnes", nav_days:"Dni", nav_map:"Mapa", nav_trails:"Trasy", nav_relax:"Relax",
   active:"AKTÍVNY", relax:"RELAXAČNÝ",
@@ -80,6 +83,7 @@ sk:{
 },
 en:{
   code:"EN",
+  trail_layer:"Trails", show_all:"Show all", on_map:"On map",
   sun_mode:"Sun mode (turns off translucency)",
   nav_today:"Today", nav_days:"Days", nav_map:"Map", nav_trails:"Trails", nav_relax:"Relax",
   active:"ACTIVE", relax:"RELAX",

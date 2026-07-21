@@ -1,12 +1,12 @@
 /* Tatry 2026 — service worker (FR-7 offline resilience) */
-const V = "t26-v4";
+const V = "t26-v5";
 const SHELL = [
   "./", "./index.html", "./app.js", "./data.js", "./i18n.js",
   "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./icon-180.png",
   "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js",
   "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
 ];
-const TILES = "t26-tiles-v4";
+const TILES = "t26-tiles-v5";
 const MAX_TILES = 1200;
 
 self.addEventListener("install", e => {
@@ -51,7 +51,7 @@ self.addEventListener("fetch", e => {
   }
 
   // Mapové dlaždice a styly: cache první (offline mapa §3 MVP bod 6)
-  const isTile = /tile\.openstreetmap\.org|tile\.opentopomap\.org|tiles\.openfreemap\.org/.test(url.hostname);
+  const isTile = /tile\.openstreetmap\.org|tile\.opentopomap\.org|tile\.waymarkedtrails\.org/.test(url.hostname);
   if (isTile) {
     e.respondWith(
       caches.match(req).then(hit => hit || fetch(req).then(r => {

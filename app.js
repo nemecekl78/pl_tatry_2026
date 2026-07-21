@@ -22,7 +22,10 @@ const S = {
   fTrailDiff: "all",
   fTrailArea: "all",
   fRelaxCat: "all",
-  map: null, markers: [], mapStyle: "liberty", mapReady: false,
+  map: null, markers: [], mapReady: false,
+  mapBase: localStorage.getItem("t26.base") || "topo",   // turistická topo mapa jako výchozí
+  trailsOverlay: localStorage.getItem("t26.trails") !== "0", // vrstva značených tras (Waymarked Trails)
+  focusTrail: null,                                       // id trasy zobrazené samostatně
   wx: {}                   // cache v paměti: key -> {data, ts, stale}
 };
 const T = k => (window.I18N[S.lang] && window.I18N[S.lang][k]) || window.I18N.cs[k] || k;
@@ -532,6 +535,7 @@ function renderTrails() {
             ${t.chains?" · ⛓ "+esc(T("chains")):""} · ${esc(t.area)}<br>
             <span style="opacity:.85">${esc(T("trailhead"))}: ${esc(t.trailhead)} · ${esc(t.highlights)}</span>
           </div>
+          <button class="go" style="margin-top:8px;display:inline-block" data-map="${t.id}">🗺 ${esc(T("on_map"))}</button>
         </div>
         <a class="go" href="${navUrl(t.trailhead_lat,t.trailhead_lng)}" target="_blank" rel="noopener">↗</a>
       </div>`).join("")}
@@ -547,6 +551,7 @@ function renderTrails() {
 
   el.querySelectorAll("[data-d]").forEach(b => b.onclick = () => { S.fTrailDiff = b.dataset.d; renderTrails(); });
   el.querySelectorAll("[data-a]").forEach(b => b.onclick = () => { S.fTrailArea = b.dataset.a; renderTrails(); });
+  el.querySelectorAll("[data-map]").forEach(b => b.onclick = () => openTrailOnMap(b.dataset.map));
 }
 
 /* =========================================================================
@@ -588,18 +593,42 @@ function renderRelax() {
 /* =========================================================================
    VIEW: MAPA (FR-2)
    ========================================================================= */
-const RASTER = {
-  osm:  { tiles:["https://tile.openstreetmap.org/{z}/{x}/{y}.png"], attr:"© OpenStreetMap", max:19 },
-  topo: { tiles:["https://a.tile.opentopomap.org/{z}/{x}/{y}.png"], attr:"© OpenTopoMap (CC-BY-SA)", max:17 }
+/* Podkladové turistické mapy — obě zobrazují značené trasy (červené/černé čárkování). */
+const BASE = {
+  topo: { tiles:["https://a.tile.opentopomap.org/{z}/{x}/{y}.png",
+                 "https://b.tile.opentopomap.org/{z}/{x}/{y}.png",
+                 "https://c.tile.opentopomap.org/{z}/{x}/{y}.png"],
+          attr:"© OpenTopoMap (CC-BY-SA)", max:17 },
+  osm:  { tiles:["https://tile.openstreetmap.org/{z}/{x}/{y}.png"], attr:"© OpenStreetMap", max:19 }
 };
-function styleFor(name) {
-  if (name === "liberty") return "https://tiles.openfreemap.org/styles/liberty";
-  const r = RASTER[name];
-  return { version:8, sources:{ r:{ type:"raster", tiles:r.tiles, tileSize:256, attribution:r.attr, maxzoom:r.max } },
-           layers:[{ id:"r", type:"raster", source:"r" }] };
+/* Waymarked Trails — vykreslí samotné značené turistické trasy jako barevné linie. */
+const TRAIL_OVERLAY = { tiles:["https://tile.waymarkedtrails.org/hiking/{z}/{x}/{y}.png"],
+                        attr:"© waymarkedtrails.org (CC-BY-SA)", max:18 };
+
+function buildStyle(base, withTrails) {
+  const b = BASE[base] || BASE.topo;
+  const sources = { base:{ type:"raster", tiles:b.tiles, tileSize:256, attribution:b.attr, maxzoom:b.max } };
+  const layers = [{ id:"base", type:"raster", source:"base" }];
+  if (withTrails) {
+    sources.trails = { type:"raster", tiles:TRAIL_OVERLAY.tiles, tileSize:256,
+                       attribution:TRAIL_OVERLAY.attr, maxzoom:TRAIL_OVERLAY.max };
+    layers.push({ id:"trails", type:"raster", source:"trails", paint:{ "raster-opacity":0.85 } });
+  }
+  return { version:8, sources, layers };
 }
 
+/* Body na mapě. V režimu „zaostření" jen výchozí bod dané trasy (+ vrchol, je-li znám). */
 function mapPoints() {
+  if (S.focusTrail) {
+    const t = TRAILS.find(x => x.id === S.focusTrail);
+    if (!t) return [];
+    const pts = [{ id:t.id, name:t.name, lat:t.trailhead_lat, lng:t.trailhead_lng, cat:"hike",
+      meta:`${t.difficulty} · ${t.distance_km} km · ${minToH(t.duration_min)} · ↑${t.elevation_gain_m} m · ${T("trailhead")}` }];
+    if (t.summit_lat && t.summit_lng)
+      pts.push({ id:t.id+"_top", name:t.name+" — "+(S.lang==="en"?"summit":"vrchol"), lat:t.summit_lat, lng:t.summit_lng,
+        cat:"scenic", meta:`${t.summit_elev||""} m n. m.` });
+    return pts;
+  }
   const pts = [];
   TRAILS.forEach(t => pts.push({ id:t.id, name:t.name, lat:t.trailhead_lat, lng:t.trailhead_lng, cat:"hike",
     meta:`${t.difficulty} · ${t.distance_km} km · ${minToH(t.duration_min)} · ↑${t.elevation_gain_m} m` }));
@@ -616,21 +645,38 @@ const LAYER_LABEL = {
   en:{hike:"Hikes",water:"Water",ebike:"E-bike",wellness:"Wellness",food:"Food",transport:"Parking"}
 };
 function renderMapChips() {
-  const defs = [["hike","🥾"],["water","💧"],["ebike","🚲"],["wellness","🧖"],["food","🍽"],["transport","🅿️"]];
   const L = LAYER_LABEL[S.lang] || LAYER_LABEL.cs;
-  $("#layerChips").innerHTML = defs.map(([k,i]) =>
-    `<button class="lchip ${S.layers[k]?"on":""}" data-l="${k}">${i} ${esc(L[k])}</button>`).join("");
-  $("#layerChips").querySelectorAll("[data-l]").forEach(b => b.onclick = () => {
+  /* Vrstva značených tras jako první přepínač. */
+  let html = `<button class="lchip ${S.trailsOverlay?"on":""}" data-trails="1">🥾 ${esc(T("trail_layer"))}</button>`;
+  if (S.focusTrail) {
+    html += `<button class="lchip" data-clear="1">✕ ${esc(T("show_all"))}</button>`;
+  } else {
+    const defs = [["hike","🥾"],["water","💧"],["ebike","🚲"],["wellness","🧖"],["food","🍽"],["transport","🅿️"]];
+    html += defs.map(([k,i]) => `<button class="lchip ${S.layers[k]?"on":""}" data-l="${k}">${i} ${esc(L[k])}</button>`).join("");
+  }
+  $("#layerChips").innerHTML = html;
+  const chips = $("#layerChips");
+  chips.querySelectorAll("[data-l]").forEach(b => b.onclick = () => {
     S.layers[b.dataset.l] = !S.layers[b.dataset.l]; renderMapChips(); drawMarkers();
   });
+  const tb = chips.querySelector("[data-trails]");
+  if (tb) tb.onclick = () => {
+    S.trailsOverlay = !S.trailsOverlay;
+    localStorage.setItem("t26.trails", S.trailsOverlay ? "1" : "0");
+    renderMapChips();
+    if (S.map) { S.map.setStyle(buildStyle(S.mapBase, S.trailsOverlay)); S.map.once("styledata", () => setTimeout(drawMarkers, 120)); }
+  };
+  const cb = chips.querySelector("[data-clear]");
+  if (cb) cb.onclick = () => { S.focusTrail = null; renderMapChips(); drawMarkers(); S.map && S.map.flyTo({ center:[20.05,49.33], zoom:9.6 }); };
 }
 
 function drawMarkers() {
   if (!S.map) return;
   S.markers.forEach(m => m.remove());
   S.markers = [];
-  mapPoints().forEach(p => {
-    if (!p.lat || !S.layers[layerOf(p.cat)]) return;
+  const pts = mapPoints();
+  pts.forEach(p => {
+    if (!p.lat || (!S.focusTrail && !S.layers[layerOf(p.cat)])) return;
     const el = document.createElement("div");
     el.className = "mk";
     el.style.background = CAT_COLOR[p.cat] || "#64748b";
@@ -641,29 +687,46 @@ function drawMarkers() {
        <a href="${navUrl(p.lat,p.lng)}" target="_blank" rel="noopener" style="color:#4cc4ff;font-size:12px;text-decoration:none">${esc(T("navigate"))} ↗</a>`);
     S.markers.push(new maplibregl.Marker({ element:el }).setLngLat([p.lng,p.lat]).setPopup(popup).addTo(S.map));
   });
+  /* V režimu zaostření sevři mapu kolem trasy (výchozí bod + vrchol). */
+  if (S.focusTrail && pts.length) {
+    if (pts.length >= 2) {
+      const b = new maplibregl.LngLatBounds();
+      pts.forEach(p => b.extend([p.lng, p.lat]));
+      S.map.fitBounds(b, { padding:70, maxZoom:14.5, duration:600 });
+    } else {
+      S.map.flyTo({ center:[pts[0].lng, pts[0].lat], zoom:13.5, duration:600 });
+    }
+  }
+}
+
+/* Otevři konkrétní trasu na mapě — zaostři jen na ni. */
+function openTrailOnMap(id) {
+  S.focusTrail = id;
+  go("map");
+  const apply = () => { renderMapChips(); drawMarkers(); };
+  if (S.map && S.mapReady) setTimeout(apply, 60);
+  else setTimeout(() => { initMap(); setTimeout(apply, 700); }, 60);
 }
 
 function initMap() {
   if (S.map) { S.map.resize(); return; }
   S.map = new maplibregl.Map({
-    container:"map", style:styleFor(S.mapStyle),
+    container:"map", style:buildStyle(S.mapBase, S.trailsOverlay),
     center:[20.05,49.33], zoom:9.6, attributionControl:{ compact:true }
   });
   S.map.addControl(new maplibregl.NavigationControl({ showCompass:false }), "bottom-right");
   S.map.addControl(new maplibregl.GeolocateControl({ trackUserLocation:true }), "bottom-right");
   S.map.on("load", () => { S.mapReady = true; drawMarkers(); });
-  S.map.on("error", e => {
-    /* fallback při nedostupném vektorovém stylu */
-    if (S.mapStyle === "liberty" && !S.mapReady) {
-      S.mapStyle = "osm"; S.map.setStyle(styleFor("osm"));
-      S.map.once("styledata", () => { S.mapReady = true; drawMarkers(); });
-    }
-  });
-  document.querySelectorAll("[data-style]").forEach(b => b.onclick = () => {
-    document.querySelectorAll("[data-style]").forEach(x => x.classList.remove("on"));
-    b.classList.add("on"); S.mapStyle = b.dataset.style;
-    S.map.setStyle(styleFor(S.mapStyle));
-    S.map.once("styledata", () => setTimeout(drawMarkers, 120));
+  /* Přepínač podkladu Topo / OSM. */
+  document.querySelectorAll("[data-style]").forEach(b => {
+    b.classList.toggle("on", b.dataset.style === S.mapBase);
+    b.onclick = () => {
+      document.querySelectorAll("[data-style]").forEach(x => x.classList.remove("on"));
+      b.classList.add("on"); S.mapBase = b.dataset.style;
+      localStorage.setItem("t26.base", S.mapBase);
+      S.map.setStyle(buildStyle(S.mapBase, S.trailsOverlay));
+      S.map.once("styledata", () => setTimeout(drawMarkers, 120));
+    };
   });
   renderMapChips();
 }

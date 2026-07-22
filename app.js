@@ -63,13 +63,15 @@ function plDays(n) {
   if (n >= 2 && n <= 4) return forms[1];
   return forms[2];
 }
-/* Navigace přes Mapy.cz v turistickém režimu.
-   Odkaz vloží cílový bod na turistickou mapu (pozor: Mapy používají pořadí lng,lat
-   a x=lng, y=lat). Na iPhonu s nainstalovanou appkou Mapy se otevře přímo v ní
-   (mapy.cz universal link) a odtud jde spustit pěší navigace; jinak ve webu. */
-const navUrl = (lat,lng) =>
-  `https://mapy.cz/turisticka?source=coor&id=${lng.toFixed(5)},${lat.toFixed(5)}` +
-  `&x=${lng.toFixed(5)}&y=${lat.toFixed(5)}&z=16`;
+/* Navigace přes oficiální Mapy.com URL (bez API klíče, otevře i appku na iOS).
+   /fnc/v1/route zobrazí CELOU trasu jako linii, ne jen bod. Pořadí lon,lat. */
+const navTo = (lat,lng) =>                    // navigace k bodu z aktuální polohy
+  `https://mapy.com/fnc/v1/route?mapset=outdoor&end=${lng.toFixed(5)},${lat.toFixed(5)}`;
+const navTrailUrl = t =>                       // celá pěší trasa výchozí bod → cíl
+  `https://mapy.com/fnc/v1/route?mapset=outdoor&routeType=foot_hiking` +
+  `&start=${t.trailhead_lng.toFixed(5)},${t.trailhead_lat.toFixed(5)}` +
+  `&end=${(t.dest_lng||t.trailhead_lng).toFixed(5)},${(t.dest_lat||t.trailhead_lat).toFixed(5)}`;
+const navUrl = navTo;                           // zpětná kompatibilita
 
 /* Jednotný pohled na trať / relax aktivitu / POI */
 function resolve(id) {
@@ -326,10 +328,13 @@ function hoursBlock(hours) {
 }
 function itemRow(o, extraMeta) {
   const cat = o.cat || "sight";
+  /* Trasa → odkaz na CELOU pěší trasu; ostatní body → navigace k bodu. */
+  const isTrail = o.raw && o.raw.trailhead_lat && o.raw.dest_lat;
+  const href = isTrail ? navTrailUrl(o.raw) : (o.lat ? navTo(o.lat, o.lng) : null);
   return `<div class="item">
     <div class="ic" style="background:${CAT_COLOR[cat]||"#334155"}22;color:${CAT_COLOR[cat]||"#94a3b8"}">${CAT_ICON[cat]||"📍"}</div>
     <div class="body"><div class="nm">${esc(o.name)}</div><div class="mt">${extraMeta||""}</div></div>
-    ${o.lat ? `<a class="go" href="${navUrl(o.lat,o.lng)}" target="_blank" rel="noopener">${esc(T("navigate"))} ↗</a>` : ""}
+    ${href ? `<a class="go" href="${href}" target="_blank" rel="noopener">${esc(T("navigate"))} ↗</a>` : ""}
   </div>`;
 }
 
@@ -387,7 +392,7 @@ async function renderToday() {
   if (day.type === "ACTIVE" && ev) {
     const picks = await suggestTrails(day, ev);
     if (picks.length) sug = `<h3>${esc(T("suggestions"))}</h3>` + picks.map(p =>
-      itemRow({ name:p.t.name, cat:"hike", lat:p.t.trailhead_lat, lng:p.t.trailhead_lng },
+      itemRow({ name:p.t.name, cat:"hike", lat:p.t.trailhead_lat, lng:p.t.trailhead_lng, raw:p.t },
         `<span class="badge b-${p.t.difficulty}">${p.t.difficulty}</span> · ${p.t.distance_km} km · ${minToH(p.t.duration_min)} · ↑${p.t.elevation_gain_m} m<br>
          <span style="color:${p.cls==="go"?"var(--green)":p.cls==="warn"?"var(--amber)":"var(--red)"}">● ${esc(p.verdict)}</span>`)
     ).join("");
@@ -543,7 +548,7 @@ function renderTrails() {
           </div>
           <button class="go" style="margin-top:8px;display:inline-block" data-map="${t.id}">🗺 ${esc(T("on_map"))}</button>
         </div>
-        <a class="go" href="${navUrl(t.trailhead_lat,t.trailhead_lng)}" target="_blank" rel="noopener">↗</a>
+        <a class="go" href="${navTrailUrl(t)}" target="_blank" rel="noopener">${esc(T("navigate"))} ↗</a>
       </div>`).join("")}
     </div>
     <div class="card">
@@ -618,7 +623,7 @@ function buildStyle(base, withTrails) {
   if (withTrails) {
     sources.trails = { type:"raster", tiles:TRAIL_OVERLAY.tiles, tileSize:256,
                        attribution:TRAIL_OVERLAY.attr, maxzoom:TRAIL_OVERLAY.max };
-    layers.push({ id:"trails", type:"raster", source:"trails", paint:{ "raster-opacity":0.85 } });
+    layers.push({ id:"trails", type:"raster", source:"trails", paint:{ "raster-opacity":1 } });
   }
   return { version:8, sources, layers };
 }
@@ -628,15 +633,16 @@ function mapPoints() {
   if (S.focusTrail) {
     const t = TRAILS.find(x => x.id === S.focusTrail);
     if (!t) return [];
-    const pts = [{ id:t.id, name:t.name, lat:t.trailhead_lat, lng:t.trailhead_lng, cat:"hike",
+    const pts = [{ id:t.id, name:t.name, lat:t.trailhead_lat, lng:t.trailhead_lng, cat:"hike", route:navTrailUrl(t),
       meta:`${t.difficulty} · ${t.distance_km} km · ${minToH(t.duration_min)} · ↑${t.elevation_gain_m} m · ${T("trailhead")}` }];
-    if (t.summit_lat && t.summit_lng)
-      pts.push({ id:t.id+"_top", name:t.name+" — "+(S.lang==="en"?"summit":"vrchol"), lat:t.summit_lat, lng:t.summit_lng,
-        cat:"scenic", meta:`${t.summit_elev||""} m n. m.` });
+    const el = t.dest_lat, en = t.dest_lng;
+    if (el && en)
+      pts.push({ id:t.id+"_top", name:t.name+" — "+(S.lang==="en"?"end":"cíl"), lat:el, lng:en,
+        cat:"scenic", route:navTrailUrl(t), meta:`${t.summit_elev?t.summit_elev+" m n. m.":T("navigate")}` });
     return pts;
   }
   const pts = [];
-  TRAILS.forEach(t => pts.push({ id:t.id, name:t.name, lat:t.trailhead_lat, lng:t.trailhead_lng, cat:"hike",
+  TRAILS.forEach(t => pts.push({ id:t.id, name:t.name, lat:t.trailhead_lat, lng:t.trailhead_lng, cat:"hike", route:navTrailUrl(t),
     meta:`${t.difficulty} · ${t.distance_km} km · ${minToH(t.duration_min)} · ↑${t.elevation_gain_m} m` }));
   RELAX.forEach(r => pts.push({ id:r.id, name:r.name, lat:r.lat, lng:r.lng,
     cat: r.id === "r_13" ? "ebike" : r.category, meta:`${r.location} · ${minToH(r.duration_min)}` }));
@@ -708,10 +714,10 @@ function setRouteLine(coords, approx) {
     /* obrys pro kontrast na topo podkladu */
     S.map.addLayer({ id:"route-case", type:"line", source:"route",
       layout:{ "line-cap":"round", "line-join":"round" },
-      paint:{ "line-color":"#0b1220", "line-width":7, "line-opacity":0.55 } });
+      paint:{ "line-color":"#ffffff", "line-width":9, "line-opacity":0.9 } });
     S.map.addLayer({ id:"route-line", type:"line", source:"route",
       layout:{ "line-cap":"round", "line-join":"round" },
-      paint:{ "line-color":"#ff2e63", "line-width":4 } });
+      paint:{ "line-color":"#ff1e56", "line-width":5.5 } });
   }
   S.map.setPaintProperty("route-line", "line-dasharray", approx ? [2,2] : [1,0]);
   S.map.setPaintProperty("route-line", "line-color", approx ? "#ffc94d" : "#ff2e63");
@@ -751,7 +757,7 @@ function drawMarkers() {
     const popup = new maplibregl.Popup({ offset:16, closeButton:true }).setHTML(
       `<div style="font-weight:650;font-size:14px;margin-bottom:4px;max-width:230px">${esc(p.name)}</div>
        <div style="font-size:12px;color:#93a5c4;margin-bottom:7px">${esc(p.meta)}<br>${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}</div>
-       <a href="${navUrl(p.lat,p.lng)}" target="_blank" rel="noopener" style="color:#4cc4ff;font-size:12px;text-decoration:none">${esc(T("navigate"))} ↗</a>`);
+       <a href="${p.route || navTo(p.lat,p.lng)}" target="_blank" rel="noopener" style="color:#4cc4ff;font-size:12px;text-decoration:none">${esc(T("navigate"))} ↗</a>`);
     S.markers.push(new maplibregl.Marker({ element:el }).setLngLat([p.lng,p.lat]).setPopup(popup).addTo(S.map));
   });
   /* V režimu zaostření dokresli linii trasy (reálná routa nebo přibližný spoj). */
